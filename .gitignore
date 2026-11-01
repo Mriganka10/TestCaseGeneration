@@ -1,0 +1,12 @@
+.venv/
+.env
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+data/
+credentials*.json
+token*.json
+.DS_Store
+dist/
+build/

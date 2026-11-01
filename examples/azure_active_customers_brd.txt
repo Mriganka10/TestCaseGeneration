@@ -1,0 +1,44 @@
+BUSINESS REQUIREMENTS DOCUMENT
+Active Customer Extract | Azure Data Factory
+Document ID: BRD-ADF-SAMPLE | Version: 1.0 | Status: Learning example
+
+Business objective
+Provide customer operations with a reliable list of active customers using the Azure Bronze-to-Silver practice pipeline. Use synthetic data only.
+
+Scope
+One manually triggered pipeline, one source file, and one output file. No scheduling, database load, or deduplication.
+
+Data contract
+Source: bronze/Customers.csv. Target: silver/active_customers_sorted.csv.
+UTF-8 CSV with a header and eight columns in this exact order:
+CustomerID, FirstName, LastName, Email, PhoneNumber, JoinDate, Status, Region.
+All fields are text. CustomerID and FirstName must be non-empty. Other fields may be empty.
+
+FR-01: Validate input
+Missing input, zero-byte input, wrong column order, missing columns, or invalid row shape must fail the run before publishing. A valid header-only file is accepted. A failed run must preserve any previous successful output.
+
+FR-02: Filter active customers
+Include a row only when Status is exactly Active (case-sensitive, no trimming). Inactive, active, ACTIVE and blank status must be excluded. Retain qualifying duplicate rows.
+
+FR-03: Sort output
+Sort globally by FirstName ascending, then CustomerID ascending, using ordinal text comparison. Retain leading zeros in CustomerID. Rows with identical sort keys may be in any relative order.
+
+FR-04: Publish and reconcile
+Write one output CSV with the same eight-column header. Preserve selected field values. Output data-row count must equal eligible input data-row count. Zero eligible rows produces a header-only file. A successful rerun replaces the output rather than appending. FR-04 depends on FR-01, FR-02 and FR-03.
+
+FR-05: Monitor the run
+Record run ID, status, timestamps, input/eligible/excluded/output row counts and an error category on failure. Input = eligible + excluded; output = eligible. Unavailable counts on failure must be marked unavailable, not zero.
+
+NFR-01: Performance target
+For inputs of up to 1,000 data rows and 1 MB, finish within 15 minutes, including startup. Larger inputs are outside the performance commitment. This is a proposed acceptance target, not a measured result.
+
+Acceptance example
+003,Ravi,Roy,ravi@example.test,001,2026-01-01,Active,East
+001,Asha,Das,asha@example.test,002,2026-01-01,Active,East
+002,Neha,Sen,neha@example.test,003,2026-01-01,Inactive,West
+004,Asha,Roy,asha2@example.test,004,2026-01-01,Active,North
+005,Zoya,Sen,zoya@example.test,005,2026-01-01,active,South
+Expected output IDs: 001, 004, 003. Input 5; eligible 3; excluded 2; output 3.
+
+Approval
+Business owner, engineer and QA reviewer: Pending.
