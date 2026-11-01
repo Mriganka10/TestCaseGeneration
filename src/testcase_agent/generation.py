@@ -74,34 +74,60 @@ class Generator:
         return analysis
 
     def generate(self, requirements: list[Requirement], context: list[Requirement]):
-        response = self.client.responses.parse(
-            model=self.model,
-            store=False,
-            input=[
-                {"role": "system", "content": SYSTEM},
-                {
-                    "role": "user",
-                    "content": "Generate detailed, executable positive, negative, boundary and exception cases for EACH target requirement. "
-                    "Each case must have concrete test data/preconditions in steps, observable expected results, evidence, and severity. "
-                    "Use Critical for data loss/security/system outage, High for core incorrect behavior, Medium for secondary behavior, Low for cosmetic issues. "
-                    "Boundary tests must use actual documented limits. Do not invent limits, credentials or features. "
-                    "If a category cannot be justified, record a specific exclusion with reason rather than fabricating a case. "
-                    "For unresolved acceptance criteria, exclude the affected category with the clarification needed. "
-                    "Every target requirement/category combination must have cases OR an exclusion, never both. "
-                    "Cases may reference target IDs only; use context only to understand dependencies. "
-                    "TARGETS: "
-                    + json.dumps([r.model_dump() for r in requirements])
-                    + "\nCONTEXT: "
-                    + json.dumps([r.model_dump() for r in context]),
-                },
-            ],
-            text_format=CaseBatch,
-        )
-        batch = response.output_parsed
-        if batch is None:
-            raise ValueError("Model did not return complete test cases")
-        validate_batch(batch, requirements)
-        return batch
+        messages = [
+            {"role": "system", "content": SYSTEM},
+            {
+                "role": "user",
+                "content": "Generate detailed, executable positive, negative, boundary and exception cases for EACH target requirement. "
+                "Each case must have concrete test data/preconditions in steps, a non-blank description and expected_result, severity, and a non-empty evidence array copied from its linked target requirements. Every evidence item needs source, location and excerpt. "
+                "Use Critical for data loss/security/system outage, High for core incorrect behavior, Medium for secondary behavior, Low for cosmetic issues. "
+                "Boundary tests must use actual documented limits. Do not invent limits, credentials or features. "
+                "If a category cannot be justified, record a specific exclusion with reason rather than fabricating a case. "
+                "For unresolved acceptance criteria, exclude the affected category with the clarification needed. "
+                "Every target requirement/category combination must have cases OR an exclusion, never both. "
+                "Cases may reference target IDs only; use context only to understand dependencies. "
+                "TARGETS: "
+                + json.dumps([r.model_dump() for r in requirements])
+                + "\nCONTEXT: "
+                + json.dumps([r.model_dump() for r in context]),
+            },
+        ]
+        for attempt in range(3):
+            batch = None
+            try:
+                response = self.client.responses.parse(
+                    model=self.model,
+                    store=False,
+                    input=list(messages),
+                    text_format=CaseBatch,
+                )
+                batch = response.output_parsed
+                if batch is None:
+                    # A refusal or absent result is not a validation error to work around.
+                    raise RuntimeError("Model did not return test cases; no workbook was published")
+                validate_batch(batch, requirements)
+                return batch
+            except ValueError as exc:
+                if attempt == 2:
+                    raise ValueError(
+                        "AI test-case validation failed after 3 attempts; no incomplete workbook was saved. "
+                        + str(exc)
+                    ) from exc
+                if batch is not None:
+                    messages.append({"role": "assistant", "content": batch.model_dump_json()})
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": "The previous batch failed validation: "
+                        + str(exc)
+                        + " Return a complete corrected batch for the same TARGETS. Every case needs a non-blank "
+                        "description and expected_result, and at least one evidence item with source, location "
+                        "and excerpt from its linked target requirements. Use the evidence supplied in TARGETS; "
+                        "do not invent citations or insert placeholder text. If a case cannot be supported, "
+                        "use an explicit exclusion for its requirement/category instead. Include all four "
+                        "categories for each target through valid cases or justified exclusions.",
+                    }
+                )
 
 
 def validate_batch(batch, requirements):
@@ -109,12 +135,25 @@ def validate_batch(batch, requirements):
     sources = {e.source for r in requirements for e in r.evidence}
     covered = set()
     signatures = set()
-    for c in batch.cases:
+    for index, c in enumerate(batch.cases, 1):
         if not c.requirement_ids or set(c.requirement_ids) - ids:
             raise ValueError("Generated case has unknown/missing requirement IDs")
         if not c.description.strip() or not c.expected_result.strip() or not c.evidence:
-            raise ValueError("Generated case is missing description, expected result or evidence")
-        if any(e.source not in sources or not e.location.strip() for e in c.evidence):
+            missing_fields = [
+                name
+                for name, value in (
+                    ("description", c.description.strip()),
+                    ("expected_result", c.expected_result.strip()),
+                    ("evidence", c.evidence),
+                )
+                if not value
+            ]
+            raise ValueError(
+                f"Case {index} ({', '.join(c.requirement_ids)}, {c.category}) is missing: {', '.join(missing_fields)}"
+            )
+        if any(
+            e.source not in sources or not e.location.strip() or not e.excerpt.strip() for e in c.evidence
+        ):
             raise ValueError("Generated case contains invalid evidence")
         sig = (tuple(sorted(c.requirement_ids)), c.category, c.description.strip().lower())
         if sig in signatures:

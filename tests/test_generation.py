@@ -95,3 +95,68 @@ def test_impact_cascades_through_shared_case_then_dependency():
     updated = make_suite("p", [], "new", gen, old)
     assert set(gen.generated) == {"FR-01", "FR-02", "FR-03"}
     assert len(updated.retired) == 12
+
+
+def test_generator_repairs_incomplete_model_response():
+    from types import SimpleNamespace
+
+    from testcase_agent.generation import Generator
+
+    req = requirement()
+    valid = FakeGenerator().generate([req], [req])
+    invalid = valid.model_copy(deep=True)
+    invalid.cases[0].evidence = []
+    calls = []
+
+    def parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_parsed=invalid if len(calls) == 1 else valid)
+
+    gen = Generator.__new__(Generator)
+    gen.model = "test"
+    gen.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    assert gen.generate([req], [req]) == valid
+    assert len(calls) == 2
+    assert "missing: evidence" in calls[1]["input"][-1]["content"]
+    assert len(calls[0]["input"]) == 2
+
+
+def test_generator_stops_after_bounded_repairs():
+    from types import SimpleNamespace
+
+    from testcase_agent.generation import Generator
+
+    req = requirement()
+    invalid = FakeGenerator().generate([req], [req])
+    invalid.cases[0].expected_result = " "
+    calls = []
+
+    def parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_parsed=invalid)
+
+    gen = Generator.__new__(Generator)
+    gen.model = "test"
+    gen.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    with pytest.raises(ValueError, match="after 3 attempts"):
+        gen.generate([req], [req])
+    assert len(calls) == 3
+
+
+def test_generator_does_not_retry_absent_result():
+    from types import SimpleNamespace
+
+    from testcase_agent.generation import Generator
+
+    calls = []
+
+    def parse(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_parsed=None)
+
+    gen = Generator.__new__(Generator)
+    gen.model = "test"
+    gen.client = SimpleNamespace(responses=SimpleNamespace(parse=parse))
+    with pytest.raises(RuntimeError):
+        gen.generate([requirement()], [requirement()])
+    assert len(calls) == 1
