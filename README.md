@@ -7,13 +7,14 @@ A working local prototype for turning BRD/BRS documents into reviewable Excel te
 Python 3.11–3.14 (3.12 recommended):
 
 ```bash
-uv sync --extra dev
+uv sync --extra dev --no-editable
 cp .env.example .env
 # Set OPENAI_API_KEY in .env. Keep credentials out of Git.
-uv run testcase-agent
+uv run --no-editable testcase-agent
 ```
 
-Alternatively: `python -m venv .venv`, activate it, then `pip install -e '.[dev]'` and `testcase-agent`.
+Alternatively: `python -m venv .venv`, activate it, then `pip install '.[dev]'` and `testcase-agent`.
+The non-editable launch avoids macOS/iCloud marking editable-install `.pth` files hidden, which recent Python versions skip.
 Open http://127.0.0.1:8000. The UI works without credentials; AI generation requires your own API key. The Codex app's connected Drive account is **not** automatically available to this standalone application.
 
 `OPENAI_MODEL` selects a vision-capable model supporting Responses structured outputs (default `gpt-4.1`). The model can be changed without editing the code. Source documents and images are sent to the configured OpenAI API; requests use `store=False`. No synthetic fallback is presented as real AI analysis.
